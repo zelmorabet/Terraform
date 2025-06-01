@@ -1,0 +1,115 @@
+trigger:
+- main
+
+variables:
+  terraformVersion: '1.5.5'
+  backendServiceConnection: 'your-azure-service-connection'
+  backendStorageAccountName: 'tfstateaccount'
+  backendContainerName: 'tfstate'
+  backendKey: 'terraform.tfstate'
+
+stages:
+- stage: Validate
+  displayName: 'Validate Terraform'
+  jobs:
+  - job: Validate
+    displayName: 'Validate Terraform'
+    steps:
+    - task: TerraformInstaller@0
+      displayName: 'Install Terraform'
+      inputs:
+        terraformVersion: $(terraformVersion)
+    
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform Init'
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        backendServiceArm: $(backendServiceConnection)
+        backendAzureRmResourceGroupName: 'tfstate-rg'
+        backendAzureRmStorageAccountName: $(backendStorageAccountName)
+        backendAzureRmContainerName: $(backendContainerName)
+        backendAzureRmKey: $(backendKey)
+    
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform Validate'
+      inputs:
+        provider: 'azurerm'
+        command: 'validate'
+
+- stage: Plan
+  displayName: 'Terraform Plan'
+  dependsOn: Validate
+  jobs:
+  - job: Plan
+    displayName: 'Terraform Plan'
+    steps:
+    - task: TerraformInstaller@0
+      displayName: 'Install Terraform'
+      inputs:
+        terraformVersion: $(terraformVersion)
+    
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform Init'
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        backendServiceArm: $(backendServiceConnection)
+        backendAzureRmResourceGroupName: 'tfstate-rg'
+        backendAzureRmStorageAccountName: $(backendStorageAccountName)
+        backendAzureRmContainerName: $(backendContainerName)
+        backendAzureRmKey: $(backendKey)
+    
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform Plan'
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        commandOptions: '-out=tfplan'
+        environmentServiceName: $(backendServiceConnection)
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish Plan Artifact'
+      inputs:
+        targetPath: '$(System.DefaultWorkingDirectory)/tfplan'
+        artifact: 'tfplan'
+        publishLocation: 'pipeline'
+
+- stage: Apply
+  displayName: 'Terraform Apply'
+  dependsOn: Plan
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - job: Apply
+    displayName: 'Terraform Apply'
+    steps:
+    - task: TerraformInstaller@0
+      displayName: 'Install Terraform'
+      inputs:
+        terraformVersion: $(terraformVersion)
+    
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform Init'
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        backendServiceArm: $(backendServiceConnection)
+        backendAzureRmResourceGroupName: 'tfstate-rg'
+        backendAzureRmStorageAccountName: $(backendStorageAccountName)
+        backendAzureRmContainerName: $(backendContainerName)
+        backendAzureRmKey: $(backendKey)
+    
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download Plan Artifact'
+      inputs:
+        buildType: 'current'
+        artifactName: 'tfplan'
+        targetPath: '$(System.DefaultWorkingDirectory)'
+    
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform Apply'
+      inputs:
+        provider: 'azurerm'
+        command: 'apply'
+        commandOptions: 'tfplan'
+        environmentServiceName: $(backendServiceConnection)
